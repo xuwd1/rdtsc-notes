@@ -185,22 +185,22 @@ And the results are pretty interesting:
 Out of 16384 samples 16384 was multiple of 38
 ```
 
-Even more interesting that it seems that no matter what frequency the processor is running at the `rdtscp` clock reading remains to be multiple of 38. (while `rdtsc` is a little even more extra interesting but its not our main concern here) 
+Even more interesting it seems that no matter what frequency the processor is running at the `rdtscp` clock reading remains to be multiple of 38. (while `rdtsc` is a little even more extra interesting but its not our main concern here) 
 
-Considering the fact that this particular ryzen processor 7840h has `constant_tsc` flag set and a base clock speed of 3.8GHz, I think it is clear that **at least for ryzen 7840H the tsc has a time resolution of 10ns.** This means that repeated measurements have to be conducted for higher time resolution. The theories are that:
+Considering the fact that this particular ryzen processor 7840h has `constant_tsc` flag set and a base clock speed of 3.8GHz, I think it is clear that **at least for ryzen 7840H the tsc has a time resolution of 10ns.** This means that repeated measurements have to be conducted for higher time resolution. The theories are:
 
 $$
-\bar{t} = t + \delta \ \ s.t. -38 \lt \delta \le 38
+\displaylines{\bar{t} = t + \delta \ \ s.t. -38 \lt \delta \le 38}
 $$
 
 Where $t$ is the true cycle count of an instruntion sequence, $\bar{t}$ the measured cycle count and $\delta$ the error. When the instruction sequence are repeated for $n$ times, the above becomes:
 
 $$
-\bar{t} = nt + \delta \\
-\frac{\bar{t}}{n} = t + \frac{\delta}{n} \\ s.t. -38 \lt \delta \le 38 
+\displaylines{\bar{t} = nt + \delta  \\ 
+\frac{\bar{t}}{n} = t + \frac{\delta}{n} \\ \\ s.t. -38 \lt \delta \le 38 }
 $$
 
-The measurement error are scale down to $\frac{1}{n}$.
+The measurement error are scaled down to $\frac{1}{n}$.
 
 Ryzen 5800X/4750G remains to be tested
 
