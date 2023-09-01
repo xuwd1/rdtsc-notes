@@ -97,7 +97,7 @@ For solving the above problems, some more or less *serializing* instructions has
 
 ## Implementations, more details and note that rdtscp's behaviour is different between AMD(7840H) and intel(12700H) platforms
 
-### Implementation
+### Implementation of a clock reading routine
 
 With the above knowledges, we could implement a clock reading routine using inline assembly as the following:
 
@@ -105,7 +105,7 @@ With the above knowledges, we could implement a clock reading routine using inli
 inline volatile void clock(uint32_t& clk_hi, uint32_t& clk_lo){
     asm volatile(
         "rdtscp\n\t"
-        "lfence"
+        "lfence\n\t"
         : "=d"(clk_hi), "=a"(clk_lo)
         :
         : "%rcx"
@@ -113,10 +113,100 @@ inline volatile void clock(uint32_t& clk_hi, uint32_t& clk_lo){
 }
 ```
 
+### Measuring inherit overhead
+
+As the [intel's guide](https://www.intel.com/content/dam/www/public/us/en/documents/white-papers/ia-32-ia-64-benchmark-code-execution-paper.pdf) suggested, before measuring any codes, we would like to determine the inherit overhead caused by using the clock reading routine itself, which is to be substracted from real measurement results. This measurement of the overhead can be done with the following routine:
+
+```cpp
+inline volatile uint64_t concat_clk(const uint32_t& clk_hi, const uint32_t& clk_lo){
+    return (uint64_t)(clk_hi)<<32 | clk_lo;
+} 
+
+inline volatile uint64_t measure_overhead(){
+    uint32_t ch1,cl1,ch2,cl2;
+    clock(ch1,cl1);
+    clock(ch2,cl2);
+    uint64_t clk1 = concat_clk(ch1,cl1);
+    uint64_t clk2 = concat_clk(ch2, cl2);
+    uint64_t delta = clk2 - clk1; //clock is monotonic
+    return delta;
+}  
+```
+
+And the compiled version of the above routine would look like something like the following:
+
+```shell
+    16f1:       0f 01 f9                rdtscp
+    16f4:       0f ae e8                lfence
+    16f7:       89 c6                   mov    %eax,%esi
+    16f9:       89 d7                   mov    %edx,%edi
+    16fb:       0f 01 f9                rdtscp
+    16fe:       0f ae e8                lfence
+```
+
+Which is exactly what we want. We could see that here the overhead includes:
+
+- Cycles taken to complete the first `lfence`
+- Cycles taken to complete two `mov`s, which is also inevitable as consecutive `rdtscp`s have the same destination registers.
+- Cycles taken to complete the latter `rdtscp`
 
 
-- resolution
-- rdtscp;rdtscp: out of order
+Again, as the [intel's guide](https://www.intel.com/content/dam/www/public/us/en/documents/white-papers/ia-32-ia-64-benchmark-code-execution-paper.pdf) suggests, we are interested mainly in the variance of consecutive overhead measurements. If the variance is small, we can be confident that the overhead is consistent so we could reliably substract the overhead from some real measurements. 
+
+### Measuring overhead on ryzen 7840H (and its weird 10ns tsc resolution)
+
+Now we lock the cpu clock speed to 3.8GHz and run the above overhead measusring routine 1000 times to observe the overheads and their variance, the results are as the following:
+
+```shell
+overheads: 76 76 76 76 76 76 76 76 76 ... 114 ... 76
+variance: 17.120064
+```
+
+It can be seen that on ryzen 7840H the measuring overhead is quite consistent while being considerably large. The real fun part is that before long I realized that for a ryzen 7840H running at 3.8GHz, the clock reading `rdtscp` instruction gives is consistently multiple of 38! Here I wrote another program demonstrating this:
+
+```cpp
+#pragma unroll(32)
+for(size_t i=0; i<N; i++){
+    clock(clk_hi,clk_lo);
+    clocks[i] = concat_clk(clk_hi, clk_lo);
+}
+uint64_t count=0;
+for (size_t i=0; i<N; i++){
+    if (clocks[i]%38==0){
+        count++;
+    }
+}
+printf("Out of %lu samples %lu was multiple of 38\n",N,count);
+```
+
+And the results are pretty interesting:
+
+```shell
+Out of 16384 samples 16384 was multiple of 38
+```
+
+Even more interesting that it seems that no matter what frequency the processor is running at the `rdtscp` clock reading remains to be multiple of 38. (while `rdtsc` is a little even more extra interesting but its not our main concern here) 
+
+Considering the fact that this particular ryzen processor 7840h has `constant_tsc` flag set and a base clock speed of 3.8GHz, I think it is clear that **at least for ryzen 7840H the tsc has a time resolution of 10ns.** This means that repeated measurements have to be conducted for higher time resolution. The theories are that:
+
+$$
+\bar{t} = t + \delta \ \ s.t. -38 \lt \delta \le 38
+$$
+
+Where $t$ is the true cycle count of an instruntion sequence, $\bar{t}$ the measured cycle count and $\delta$ the error. When the instruction sequence are repeated for $n$ times, the above becomes:
+
+$$
+\bar{t} = nt + \delta \\
+\frac{\bar{t}}{n} = t + \frac{\delta}{n} \\ s.t. -38 \lt \delta \le 38 
+$$
+
+The measurement error are scale down to $\frac{1}{n}$.
+
+Ryzen 5800X/4750G remains to be tested
+
+### Measuring overhead on intel 12700H
+
+TODO
 
 ## The incrementing frequency of the TSC 
 
@@ -138,13 +228,13 @@ $ sudo dmesg | grep -Ii tsc
 ...
 ```
 Then our problem is how to we read this calibration result. In fact Linux kernel has an exported symbol `tsc_khz` defined in [tsc.c](https://github.com/torvalds/linux/blob/master/arch/x86/kernel/tsc.c) however it is not exposed to userspace. Stackoverflow user maxschlepzig summarized many ways to access this symbol in [this stackoverflow thread](https://stackoverflow.com/questions/35123379/getting-tsc-rate-from-x86-kernel). I personally feel it is most reasonable and convenient to use a kernel module. 
-
-https://github.com/trailofbits/tsc_freq_khz
+[This repository](https://github.com/trailofbits/tsc_freq_khz) has a quite satisfying implementation.
 
 #### 2. Performing a rather flawed calibration
 
 It is also possible to get the tsc frequency by conducting a calibration. The idea is simple: with some wall clock provided by the system, we record start time with tsc clock, and end time with tsc clock, then divide the time difference by the clock difference to get the tsc cycle time.
 
+TODO
 
 ## Constant TSC
 
